@@ -164,14 +164,10 @@ async function callGemini(messages, history, modelName) {
     return await attemptCall(preferredModel);
   } catch (err) {
     if (err.status === 429 || (err.message && err.message.includes('429'))) {
-      console.warn(`Quota hit for ${preferredModel}. Falling back to gemini-1.5-flash-latest.`);
-      try {
-        return await attemptCall('gemini-1.5-flash-latest');
-      } catch (fallbackErr) {
-        throw fallbackErr;
-      }
+      throw new Error(`${preferredModel} limit over. Please wait or switch to Ollama in the bottom controls.`);
     }
-    throw err;
+    console.error(`Gemini Error (${preferredModel}):`, err.message);
+    throw new Error(`${preferredModel} is currently under maintenance or unavailable. Please switch to Gemini 2 or Ollama in the bottom controls.`);
   }
 }
 
