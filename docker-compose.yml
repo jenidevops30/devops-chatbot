@@ -1,0 +1,79 @@
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: devops-chatbot-backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - FRONTEND_URL=https://devops.it.cyou
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-chatbot_user}
+      - DB_PASSWORD=${DB_PASSWORD:-chatbot_password}
+      - DB_NAME=${DB_NAME:-chatbot_db}
+      - JWT_SECRET=${JWT_SECRET:-your_super_secret_jwt_key}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-flash-preview}
+      - MAX_FREE_MESSAGES=10
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - chatbot-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - VITE_API_URL=
+    container_name: devops-chatbot-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - chatbot-net
+
+  db:
+    image: mysql:8.0
+    container_name: devops-chatbot-db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-chatbot_db}
+      MYSQL_USER: ${DB_USER:-chatbot_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-chatbot_password}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
+    ports:
+      - "3307:3306"
+    volumes:
+      - chatbot-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u$$MYSQL_USER", "-p$$MYSQL_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - chatbot-net
+
+volumes:
+  chatbot-db-data:
+
+networks:
+  chatbot-net:
+    driver: bridge
