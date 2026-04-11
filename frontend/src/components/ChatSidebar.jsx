@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-export default function ChatSidebar({ onSelectConversation, onNewChat, activeId, token }) {
+export default function ChatSidebar({ onSelectConversation, onNewChat, onClose, activeId, token, userName }) {
   const [conversations, setConversations] = useState([]);
   const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -22,18 +22,38 @@ export default function ChatSidebar({ onSelectConversation, onNewChat, activeId,
   }, [token, activeId]);
 
   return (
-    <aside className="w-[260px] bg-[#020617] flex flex-col h-full shrink-0 group/sidebar overflow-hidden transition-all border-r border-gray-900 shadow-2xl">
-      <div className="p-3.5">
+    <aside className="w-[260px] bg-[#020617] flex flex-col h-full shrink-0 group/sidebar overflow-hidden transition-all border-r border-gray-900 shadow-2xl relative">
+      <div className="p-3.5 flex items-center gap-2">
         <button
           onClick={onNewChat}
-          className="w-full flex items-center gap-3 px-3 py-3 bg-transparent hover:bg-gray-800/50 text-gray-100 border border-gray-800 rounded-xl transition-all group font-sans font-medium text-sm"
+          className="flex-1 flex items-center gap-3 px-3 py-3 bg-transparent hover:bg-gray-800/50 text-gray-100 border border-gray-800 rounded-xl transition-all group font-sans font-medium text-sm"
         >
           <span className="w-7 h-7 bg-blue-600/20 group-hover:bg-blue-600/30 text-blue-400 rounded-lg flex items-center justify-center text-lg">+</span>
           New Chat
         </button>
+        
+        {/* Claude-style Close Button */}
+        <button 
+          onClick={onClose}
+          className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-800/50 rounded-xl border border-gray-800 transition-all active:scale-90"
+          title="Hide Sidebar"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth="2" />
+            <line x1="9" y1="3" x2="9" y2="21" strokeWidth="2" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-none p-2 space-y-0.5">
+        {userName && (
+          <div className="px-3 py-3 mb-2 bg-gradient-to-br from-blue-600/10 to-transparent rounded-xl border border-blue-500/10">
+            <p className="text-[10px] text-blue-400 font-mono font-bold uppercase tracking-widest opacity-70">Welcome back</p>
+            <p className="text-lg font-bold text-white truncate font-sans">Hello, {userName}!</p>
+          </div>
+        )}
+
         <p className="px-3 py-2 text-[10px] font-bold text-gray-700 uppercase tracking-[0.2em] font-mono">History</p>
         
         {!token ? (

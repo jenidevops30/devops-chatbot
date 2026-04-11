@@ -27,8 +27,9 @@ function CopyButton({ code }) {
   );
 }
 
-export default function ChatMessage({ message }) {
+export default function ChatMessage({ message, userName }) {
   const isUser = message.role === 'user';
+  const displayInitial = isUser && userName ? userName.charAt(0).toUpperCase() : null;
   
   const components = {
     code({ node, inline, className, children, ...props }) {
@@ -85,23 +86,35 @@ export default function ChatMessage({ message }) {
   return (
     <div className={`w-full flex justify-center py-6 group ${isUser ? '' : 'bg-transparent'}`}>
       <div className="max-w-3xl w-full flex gap-5 px-5 animate-in fade-in slide-in-from-bottom-2 duration-500">
-        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg shrink-0 mt-0.5 shadow-lg border transition-all ${
-          isUser ? 'bg-gray-800 border-gray-700' : 'bg-blue-600 border-blue-500 shadow-blue-900/10'
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold shrink-0 mt-0.5 shadow-lg border transition-all ${
+          isUser ? 'bg-blue-600 border-blue-500 text-white text-sm' : 'bg-gray-800 border-gray-700 text-lg'
         }`}>
-          {isUser ? '👤' : '⚙'}
+          {isUser ? (displayInitial || '👤') : '⚙'}
         </div>
 
         <div className="flex-1 min-w-0 flex flex-col pt-1">
           <div className="text-[11px] font-bold text-gray-600 font-mono uppercase tracking-[0.2em] mb-2 opacity-0 group-hover:opacity-100 transition-opacity">
-            {isUser ? 'You' : 'DevOps Assistant'}
+            {isUser ? (userName || 'You') : 'DevOps Assistant'}
           </div>
           <div className="text-gray-100">
             {isUser ? (
               <p className="whitespace-pre-wrap text-[15px] leading-relaxed selection:bg-blue-500/30 font-medium text-gray-200">{message.content}</p>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-                {message.content}
-              </ReactMarkdown>
+              <>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+                  {message.content}
+                </ReactMarkdown>
+                
+                {message.suggestion && (
+                  <button
+                    onClick={() => message.onSuggestionClick && message.onSuggestionClick(message.suggestion)}
+                    className="mt-4 px-5 py-2.5 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/50 rounded-xl text-blue-400 text-[13px] font-bold font-mono uppercase tracking-wider transition-all flex items-center gap-2 group/btn active:scale-95"
+                  >
+                    <span>{message.suggestion}</span>
+                    <span className="group-hover/btn:translate-x-1 transition-transform">🔄</span>
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>

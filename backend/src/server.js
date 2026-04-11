@@ -140,8 +140,25 @@ Guidelines:
 - Keep responses focused and practical`;
 
 // Gemini Chat Function
+// Supported Demo Models: 
+// - gemini-3-flash-preview (Gemini 3 Flash)
+// - gemini-3-flash-live    (Gemini 3 Flash Live)
+// - gemini-2.5-flash        (Gemini 2.5 Flash)
+// - gemini-2.0-flash        (Gemini 2 Flash)
+// - gemini-2.0-flash-lite-preview (Gemini 2 Flash Lite)
+// - gemini-1.5-flash-exp    (Gemma 3 1B)
 async function callGemini(messages, history, modelName) {
-  const preferredModel = modelName || process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
+  // Mapping futuristic demo tiers to the FINAL VERIFIED ID for your account
+  const modelMap = {
+    'gemini-3-flash-preview': 'gemini-2.5-computer-use-preview-10-2025',
+    'gemini-3-flash-live': 'gemini-2.5-computer-use-preview-10-2025',
+    'gemini-2.5-flash': 'gemini-2.5-computer-use-preview-10-2025',
+    'gemini-2.0-flash': 'gemini-2.5-computer-use-preview-10-2025',
+    'gemini-2.0-flash-lite-preview': 'gemini-2.5-computer-use-preview-10-2025',
+    'gemini-1.5-flash-exp': 'gemini-2.5-computer-use-preview-10-2025'
+  };
+
+  const preferredModel = modelMap[modelName] || modelName || 'gemini-2.5-computer-use-preview-10-2025';
   
   const attemptCall = async (mName) => {
     const model = genAI.getGenerativeModel({ model: mName });
@@ -288,10 +305,12 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
       return res.status(401).json({ error: 'Authentication or Guest ID required' });
     }
 
-    if (currentCount >= MAX_FREE_MESSAGES) {
+    const isExempt = !!req.user || provider === 'ollama';
+
+    if (!isExempt && currentCount >= MAX_FREE_MESSAGES) {
       return res.status(403).json({ 
         error: 'Free tier limit reached', 
-        details: `You have used all ${MAX_FREE_MESSAGES} free chats. Please log in or register to continue.` 
+        details: `You have used all ${MAX_FREE_MESSAGES} free chats. Please log in or register to continue for unlimited access.` 
       });
     }
 
@@ -303,6 +322,9 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
 
     // 3. Call AI Provider
     let text;
+    const model = req.body.model;
+    console.log(`[DEBUG] Chat Request: Provider=${provider}, Model=${model}`);
+
     if (provider === 'ollama') {
       text = await callOllama(messages, history, req.body.model);
     } else {
@@ -313,7 +335,9 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
     let finalConversationId = req.body.conversationId;
 
     if (userId) {
-      await pool.query('UPDATE users SET message_count = message_count + 1 WHERE id = ?', [userId]);
+      if (provider !== 'ollama') {
+        await pool.query('UPDATE users SET message_count = message_count + 1 WHERE id = ?', [userId]);
+      }
 
       if (!finalConversationId) {
         const [convResult] = await pool.query(
@@ -333,16 +357,18 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
         [finalConversationId, text]
       );
     } else {
-      await pool.query('UPDATE guest_usage SET message_count = message_count + 1 WHERE guest_id = ?', [guestId]);
+      if (provider !== 'ollama') {
+        await pool.query('UPDATE guest_usage SET message_count = message_count + 1 WHERE guest_id = ?', [guestId]);
+      }
     }
 
     res.json({
       message: text,
       conversationId: finalConversationId,
       usage: {
-        messageCount: currentCount + 1,
+        messageCount: provider === 'ollama' ? currentCount : currentCount + 1,
         isGuest: !userId,
-        provider
+        provider: provider
       },
     });
   } catch (error) {

@@ -10,6 +10,7 @@ import Register from './pages/Register';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { useChatHistory } from './hooks/useChatHistory';
 import ChatSidebar from './components/ChatSidebar';
+import OnboardingModal from './components/OnboardingModal';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -20,24 +21,40 @@ function Chat() {
   const [showLimitPopup, setShowLimitPopup] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState(null);
   const { messages, setMessages, addMessage, clearMessages } = useChatHistory();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [aiProvider, setAiProvider] = useState('gemini');
   const [selectedModel, setSelectedModel] = useState('gemini-3-flash-preview');
   const [ollamaModels, setOllamaModels] = useState([]);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [userName, setUserName] = useState(localStorage.getItem('userName') || '');
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const chatEndRef = useRef(null);
   const textareaRef = useRef(null);
   const scrollContainerRef = useRef(null);
 
-  const MAX_FREE_MESSAGES = 10;
+  const MAX_FREE_MESSAGES = 25;
   
   const currentCount = (user ? user.messageCount : guestMessageCount) || 0;
-  const remainingChats = MAX_FREE_MESSAGES - currentCount;
+  const isPremium = !!user || aiProvider === 'ollama';
+  const remainingChats = isPremium ? 999 : MAX_FREE_MESSAGES - currentCount;
 
   useEffect(() => {
     if (!showScrollButton) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, isLoading, showScrollButton]);
+
+  useEffect(() => {
+    if (!userName && !loading && !user) {
+      setShowOnboarding(true);
+    }
+  }, [userName, loading, user]);
+
+  const handleOnboardingComplete = (name) => {
+    setUserName(name);
+    localStorage.setItem('userName', name);
+    setShowOnboarding(false);
+  };
 
   const handleScroll = useCallback(() => {
     if (scrollContainerRef.current) {
@@ -79,15 +96,17 @@ function Chat() {
         .then(res => res.json())
         .then(data => {
           setOllamaModels(data);
-          if (data.length > 0 && !data.find(m => m.name === selectedModel)) {
+          // Auto-select llama3.2:1b if it's in the list
+          const llama32 = data.find(m => m.name.includes('llama3.2'));
+          if (llama32 && (!selectedModel || selectedModel.startsWith('gemini'))) {
+            setSelectedModel(llama32.name);
+          } else if (data.length > 0 && (!selectedModel || selectedModel.startsWith('gemini'))) {
             setSelectedModel(data[0].name);
           }
         })
         .catch(err => console.error('Failed to fetch Ollama models:', err));
-    } else {
-      setSelectedModel('gemini-3-flash-preview');
     }
-  }, [aiProvider, selectedModel]);
+  }, [aiProvider]);
 
   const startNewChat = useCallback(() => {
     clearMessages();
@@ -98,7 +117,7 @@ function Chat() {
     const userText = (text || input).trim();
     if (!userText || isLoading) return;
 
-    if (remainingChats <= 0 && !user) {
+    if (!isPremium && remainingChats <= 0) {
       setShowLimitPopup(true);
       return;
     }
@@ -120,6 +139,22 @@ function Chat() {
         headers['x-guest-id'] = guestId;
       }
 
+      // Safety Guard: Ensure model matches provider before sending
+      let activeModel = selectedModel;
+      if (aiProvider === 'ollama') {
+        // Force an Ollama model if we're in Ollama mode
+        if (activeModel.startsWith('gemini') || activeModel.startsWith('gemma')) {
+          activeModel = ollamaModels.length > 0 ? ollamaModels[0].name : 'llama3.2:1b';
+        }
+      } else if (aiProvider === 'gemini') {
+        // Force a Gemini model if we're in Gemini mode
+        if (!activeModel.startsWith('gemini')) {
+          activeModel = 'gemini-1.5-flash';
+        }
+      }
+
+      console.log('Sending message with provider:', aiProvider, 'and model:', activeModel);
+
       const res = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers,
@@ -128,7 +163,7 @@ function Chat() {
           conversationHistory: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
           conversationId: activeConversationId,
           provider: aiProvider,
-          model: selectedModel
+          model: activeModel
         }),
       });
 
@@ -154,24 +189,50 @@ function Chat() {
         await checkUser();
       } else {
         const newCount = await fetchGuestStatus();
-        if (newCount >= MAX_FREE_MESSAGES) {
+        if (aiProvider !== 'ollama' && newCount >= MAX_FREE_MESSAGES) {
           // Delay briefly so user can see the message being added
           setTimeout(() => setShowLimitPopup(true), 1500);
         }
       }
 
     } catch (err) {
-      addMessage({
-        role: 'assistant',
-        content: `**Error:** ${err.message}`,
-        timestamp: Date.now(),
+      console.error('Chat error:', err);
+      
+      // Smart Fallback Logic: Suggest Ollama if Gemini fails
+      let displayError = err.message;
+      let showOllamaSuggestion = false;
+      
+      if (aiProvider === 'gemini' && (err.message.includes('limit') || err.message.includes('quota') || err.message.includes('maintenance') || err.message.includes('unavailable'))) {
+        displayError = "Gemini is currently at capacity. Would you like to switch to your local Ollama engine for this request?";
+        showOllamaSuggestion = true;
+      }
+
+      if (err.message.includes('Free tier limit reached')) {
+        setShowLimitPopup(true);
+      }
+
+      const errorMsg = { 
+        role: 'assistant', 
+        content: `Error: ${displayError}`, 
         isError: true,
-      });
+        suggestion: showOllamaSuggestion ? 'Switch to Ollama' : null,
+        onSuggestionClick: () => {
+          setAiProvider('ollama');
+          if (ollamaModels.length > 0) {
+            setSelectedModel(ollamaModels[0].name);
+          } else {
+            setSelectedModel('llama3.2:1b');
+          }
+        },
+        timestamp: Date.now() 
+      };
+      
+      setMessages(prev => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
       textareaRef.current?.focus();
     }
-  }, [input, isLoading, messages, addMessage, token, guestId, remainingChats, user, checkUser, fetchGuestStatus, activeConversationId]);
+  }, [input, isLoading, messages, addMessage, token, guestId, remainingChats, user, checkUser, fetchGuestStatus, activeConversationId, ollamaModels]);
 
   // Loading state
   if (loading) {
@@ -189,24 +250,61 @@ function Chat() {
     }
   };
 
+  const scrollButtonStyle = `fixed bottom-36 right-4 lg:right-10 w-10 h-10 lg:w-12 lg:h-12 rounded-full bg-blue-600/90 border border-blue-500 flex items-center justify-center text-white transition-all shadow-2xl z-50 backdrop-blur-md ${
+    showScrollButton ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-4 scale-90 pointer-events-none'
+  } hover:bg-blue-500 active:scale-95`;
+
   return (
-    <div className="flex h-screen bg-[#030712] text-[#f3f4f6] font-sans overflow-hidden">
-      <ChatSidebar 
-        token={token} 
-        activeId={activeConversationId} 
-        onSelectConversation={loadConversationMessages} 
-        onNewChat={startNewChat}
-      />
+    <div className="flex h-screen bg-[#030712] text-[#f3f4f6] font-sans overflow-hidden relative">
+      {/* Sidebar - Persistent Toggle with Dynamic Width for Desktop Expansion */}
+      <div className={`${isSidebarOpen ? 'w-[260px] translate-x-0' : 'w-0 -translate-x-full'} transition-all duration-300 fixed lg:relative z-40 bg-[#030712] h-full overflow-hidden`}>
+        <ChatSidebar 
+          token={token} 
+          activeId={activeConversationId} 
+          onClose={() => setIsSidebarOpen(false)}
+          userName={userName}
+          onSelectConversation={(id) => {
+            loadConversationMessages(id);
+            setIsSidebarOpen(false); // Auto-close on mobile
+          }} 
+          onNewChat={() => {
+            startNewChat();
+            setIsSidebarOpen(false); // Auto-close on mobile
+          }}
+        />
+      </div>
+
+      {/* Mobile Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="lg:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-35" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
 
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         {/* Header */}
         <header className="px-6 py-4 flex items-center justify-between sticky top-0 z-10 shrink-0 bg-[#030712]/80 backdrop-blur-md border-b border-gray-900/50">
           <div className="flex items-center gap-4">
-            <h1 className="text-base font-bold text-gray-100 font-sans tracking-tight">DevOps Assistant</h1>
+            {/* Claude-style Sidebar Toggle */}
+            {!isSidebarOpen && (
+              <button 
+                onClick={() => setIsSidebarOpen(true)}
+                className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-800/40 rounded-xl transition-all"
+                title="Show Sidebar"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 4.5l7.5 7.5-7.5 7.5M4.5 4.5l7.5 7.5-7.5 7.5" />
+                  <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth="2" />
+                  <line x1="9" y1="3" x2="9" y2="21" strokeWidth="2" />
+                </svg>
+              </button>
+            )}
+            <h1 className="text-sm lg:text-base font-bold text-gray-100 font-sans tracking-tight">DevOps Assistant</h1>
           </div>
 
           <div className="flex items-center gap-4">
-            {!user ? (
+            {!isPremium ? (
               <div className="px-3 py-1 rounded-full bg-red-900/10 border border-red-900/30 text-red-500 text-[10px] font-bold font-mono tracking-widest uppercase">
                 {currentCount} / {MAX_FREE_MESSAGES} FREE
               </div>
@@ -240,7 +338,7 @@ function Chat() {
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto scrollbar-thin scrollbar-none relative flex flex-col items-center"
         >
-          <div className="max-w-4xl w-full flex flex-col group/history">
+          <div className="max-w-4xl w-full flex flex-col group/history px-2 lg:px-0">
             {messages.length === 0 ? (
               <WelcomeScreen onSelect={sendMessage} />
             ) : (
@@ -248,7 +346,13 @@ function Chat() {
                 {/* Topic chips at top of history */}
                 <TopicChips onSelect={sendMessage} />
                 <div className="py-4">
-                  {messages.map((msg, i) => <ChatMessage key={i} message={msg} />)}
+                    {messages.map((m, idx) => (
+                      <ChatMessage 
+                        key={idx} 
+                        message={m} 
+                        userName={userName || 'Guest'} 
+                      />
+                    ))}
                 </div>
               </>
             )}
@@ -256,27 +360,30 @@ function Chat() {
             <div ref={chatEndRef} className="h-32" />
           </div>
 
-          {/* Floating Action Button (Scroll Down) */}
+          {/* Floating Action Button (Scroll Down) - REPOSITIONED TO RIGHT */}
           <button 
             onClick={scrollToBottom}
-            className={`absolute bottom-32 left-1/2 -translate-x-1/2 w-10 h-10 rounded-full bg-blue-600 border border-blue-500 flex items-center justify-center text-white transition-all shadow-2xl z-50 ${
+            className={`fixed bottom-36 right-4 lg:right-10 w-10 h-10 lg:w-12 lg:h-12 rounded-full bg-blue-600/90 border border-blue-500 flex items-center justify-center text-white transition-all shadow-2xl z-50 backdrop-blur-md ${
               showScrollButton ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
             } hover:bg-blue-500 active:scale-95`}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+            <svg className="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
             </svg>
           </button>
         </main>
 
-        {/* Floating Input Capsule */}
-        <div className="absolute bottom-0 left-0 right-0 p-6 flex flex-col items-center pointer-events-none">
+        {/* Floating Input Capsule - RESPONSIVE */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 lg:p-6 flex flex-col items-center pointer-events-none">
           {/* Bottom Model Controls */}
-          <div className="max-w-3xl w-full mb-3 mb-4 pointer-events-auto flex items-center justify-center gap-3">
+          <div className="max-w-3xl w-full mb-3 mb-4 pointer-events-auto flex flex-wrap items-center justify-center gap-2 lg:gap-3 px-2">
              {/* Provider Switcher */}
              <div className="flex bg-[#0b0f1a]/80 backdrop-blur-md rounded-xl p-1 border border-gray-800 shadow-xl">
                 <button 
-                  onClick={() => setAiProvider('gemini')}
+                  onClick={() => {
+                    setAiProvider('gemini');
+                    setSelectedModel('gemini-2.0-flash');
+                  }}
                   className={`px-4 py-1.5 rounded-lg text-[11px] font-bold font-sans transition-all uppercase tracking-wider ${
                     aiProvider === 'gemini' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'
                   }`}
@@ -284,7 +391,12 @@ function Chat() {
                   Gemini
                 </button>
                 <button 
-                  onClick={() => setAiProvider('ollama')}
+                  onClick={() => {
+                    setAiProvider('ollama');
+                    if (ollamaModels.length > 0) {
+                      setSelectedModel(ollamaModels[0].name);
+                    }
+                  }}
                   className={`px-4 py-1.5 rounded-lg text-[11px] font-bold font-sans transition-all uppercase tracking-wider ${
                     aiProvider === 'ollama' ? 'bg-orange-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'
                   }`}
@@ -303,10 +415,12 @@ function Chat() {
                 >
                   {aiProvider === 'gemini' ? (
                     <>
-                      <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
-                      <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                      <option value="gemini-2.0-flash">Gemini 2 Flash</option>
-                      <option value="gemini-2.0-flash-lite-preview">Gemini 2 Flash Lite</option>
+                    <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+                    <option value="gemini-3-flash-live">Gemini 3 Flash Live</option>
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                    <option value="gemini-2.0-flash">Gemini 2 Flash</option>
+                    <option value="gemini-2.0-flash-lite-preview">Gemini 2 Flash Lite</option>
+                    <option value="gemini-1.5-flash-exp">Gemma 3 1B</option>
                     </>
                   ) : (
                     <>
@@ -398,6 +512,9 @@ function Chat() {
             </div>
           </div>
         </div>
+      )}
+      {showOnboarding && (
+        <OnboardingModal onComplete={handleOnboardingComplete} />
       )}
     </div>
   );
